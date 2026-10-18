@@ -18,6 +18,10 @@ public sealed class RabbitMqTransport(
     ILogger<RabbitMqTransport> logger) : ITransport, IAsyncDisposable
 {
     private const byte DeclaredExchangeMarker = byte.MinValue;
+    private const string QueueTypeArgument = "x-queue-type";
+    private const string QuorumQueueType = "quorum";
+    private const string DeadLetterExchangeArgument = "x-dead-letter-exchange";
+    private const string DeadLetterRoutingKeyArgument = "x-dead-letter-routing-key";
     private readonly SemaphoreSlim _publisherChannelLock = new(1, 1);
     private readonly SemaphoreSlim _publisherSendLock = new(1, 1);
     private readonly ConcurrentDictionary<string, byte> _declaredExchanges = new(StringComparer.Ordinal);
@@ -88,14 +92,16 @@ public sealed class RabbitMqTransport(
     public Task<ITransportSubscription> SubscribeAsync(IBusConfiguration configuration, string topic,
         IInboundMessageHandler handler, CancellationToken cancellationToken = default)
     {
-        return SubscribeInternalAsync(topic, handler, cancellationToken);
+        return SubscribeInternalAsync(configuration, topic, handler, cancellationToken);
     }
 
     private async Task<ITransportSubscription> SubscribeInternalAsync(
+        IBusConfiguration configuration,
         string topic,
         IInboundMessageHandler handler,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(topic);
         ArgumentNullException.ThrowIfNull(handler);
         
@@ -109,11 +115,27 @@ public sealed class RabbitMqTransport(
             cancellationToken: cancellationToken);
 
         var queueName = $"{Name}.{topic}.{handler.Name}";
+        var deadLetterQueueName = $"{queueName}.dead-letter";
+        await channel.QueueDeclareAsync(
+            queue: deadLetterQueueName,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            cancellationToken: cancellationToken);
+
+        // A quorum queue counts deliveries in the x-delivery-count header, which classic queues do not set.
+        // Rejected messages are routed through the default exchange to the dead-letter queue.
         await channel.QueueDeclareAsync(
             queue: queueName,
             durable: true,
             exclusive: false,
             autoDelete: false,
+            arguments: new Dictionary<string, object?>
+            {
+                [QueueTypeArgument] = QuorumQueueType,
+                [DeadLetterExchangeArgument] = string.Empty,
+                [DeadLetterRoutingKeyArgument] = deadLetterQueueName,
+            },
             cancellationToken: cancellationToken);
 
         await channel.QueueBindAsync(
@@ -146,6 +168,18 @@ public sealed class RabbitMqTransport(
             catch
             {
                 action = AckAction.Retry;
+            }
+
+            if (action == AckAction.Retry && inbound.DeliveryAttempt >= configuration.MaxDeliveryAttempts)
+            {
+                logger.LogError(
+                    "Message {MessageId} failed {DeliveryAttempt} delivery attempts on subscription {TransportName}_{Topic}_{HandlerName}; dead-lettering it.",
+                    inbound.MessageId,
+                    inbound.DeliveryAttempt,
+                    Name,
+                    topic,
+                    handler.Name);
+                action = AckAction.DeadLetter;
             }
 
             try
