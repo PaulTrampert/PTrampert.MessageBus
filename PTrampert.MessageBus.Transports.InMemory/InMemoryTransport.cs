@@ -49,9 +49,10 @@ public class InMemoryTransport(ILoggerFactory loggerFactory) : ITransport
     }
 
     /// <inheritdoc/>
-    public Task<ITransportSubscription> SubscribeAsync(string topic, IInboundMessageHandler handler, CancellationToken cancellationToken = default)
+    public Task<ITransportSubscription> SubscribeAsync(IBusConfiguration configuration, string topic, IInboundMessageHandler handler, CancellationToken cancellationToken = default)
     {
         var subscription = new InMemoryTransportSubscription(
+            configuration,
             $"{Name}_{topic}",
             handler,
             loggerFactory.CreateLogger<InMemoryTransportSubscription>(),

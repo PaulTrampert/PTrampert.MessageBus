@@ -61,6 +61,24 @@ public sealed class BusServiceTests
     }
 
     [Test]
+    public async Task StartAsync_PassesBusConfigurationToEverySubscription()
+    {
+        _handlerRegistry.RegisterHandler<HandlerA, TestMessage>(topic: "topic-a");
+        _handlerRegistry.RegisterHandler<HandlerB, TestMessage>(topic: "topic-b");
+        _busConfigurator.MaxDeliveryAttempts = 7;
+
+        var configurations = new List<IBusConfiguration>();
+        _transportRegistry.Register(CreateTransport("rabbitmq", null, configurations: configurations).Object);
+
+        await _subject.StartAsync(CancellationToken.None);
+        await _subject.StopAsync(CancellationToken.None);
+
+        Assert.That(configurations, Has.Count.EqualTo(2));
+        Assert.That(configurations, Has.All.SameAs(_busConfigurator));
+        Assert.That(configurations[0].MaxDeliveryAttempts, Is.EqualTo(7));
+    }
+
+    [Test]
     public async Task StopAsync_DisposesAllSubscriptions()
     {
         _handlerRegistry.RegisterHandler<HandlerA, TestMessage>(topic: "topic-a");
@@ -123,18 +141,21 @@ public sealed class BusServiceTests
         string name,
         List<string>? topics,
         List<Mock<ITransportSubscription>>? createdSubscriptions = null,
-        Action<CancellationToken>? onToken = null)
+        Action<CancellationToken>? onToken = null,
+        List<IBusConfiguration>? configurations = null)
     {
         var transport = new Mock<ITransport>();
         transport.Setup(t => t.Name).Returns(name);
         transport.Setup(t => t.Capabilities).Returns(TransportCapability.None);
         transport
             .Setup(t => t.SubscribeAsync(
+                It.IsAny<IBusConfiguration>(),
                 It.IsAny<string>(),
                 It.IsAny<IInboundMessageHandler>(),
                 It.IsAny<CancellationToken>()))
-            .Callback<string, IInboundMessageHandler, CancellationToken>((topic, _, token) =>
+            .Callback<IBusConfiguration, string, IInboundMessageHandler, CancellationToken>((configuration, topic, _, token) =>
             {
+                configurations?.Add(configuration);
                 topics?.Add(topic);
                 onToken?.Invoke(token);
             })

@@ -54,6 +54,7 @@ internal class BusService(BusConfigurator busConfigurator, ILogger<BusService> l
             foreach (var handler in handlerList)
             {
                 var subscription = await transport.SubscribeAsync(
+                    busConfigurator,
                     route.Topic,
                     handler,
                     stoppingToken);

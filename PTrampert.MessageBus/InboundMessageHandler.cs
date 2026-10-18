@@ -50,7 +50,7 @@ public class InboundMessageHandler<T> : IInboundMessageHandler
     {
         IHandler<T> handler;
         MessageContext<T> messageContext;
-        using var scope = _serviceProvider.CreateScope();
+        await using var scope = _serviceProvider.CreateAsyncScope();
         try
         {
             var messageObj = _serializer.Deserialize<T>(message.Body);

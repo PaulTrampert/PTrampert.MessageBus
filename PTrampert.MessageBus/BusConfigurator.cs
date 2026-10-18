@@ -9,7 +9,7 @@ namespace PTrampert.MessageBus;
 /// <summary>
 /// Provides configuration methods for registering message handlers and transports with the PTrampert.MessageBus messaging infrastructure.
 /// </summary>
-public class BusConfigurator
+public class BusConfigurator : IBusConfiguration
 {
     internal readonly HandlerRegistry HandlerRegistry;
     internal readonly TransportRegistry TransportRegistry;
@@ -21,6 +21,10 @@ public class BusConfigurator
         TransportRegistry = transportRegistry;
         _serviceProvider = serviceProvider;
     }
+
+    /// <inheritdoc/>
+    /// <remarks>Defaults to 5.</remarks>
+    public int MaxDeliveryAttempts { get; set; } = 5;
 
     /// <summary>
     /// Scans the given assemblies for <see cref="IHandler{TMessage}"/> implementations and registers them automatically.

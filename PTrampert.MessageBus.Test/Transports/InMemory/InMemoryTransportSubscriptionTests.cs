@@ -3,12 +3,15 @@ using System.Text;
 using PTrampert.MessageBus.Transport;
 using PTrampert.MessageBus.Transports.InMemory;
 using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace PTrampert.MessageBus.Test.Transports.InMemory;
 
 [TestFixture]
 public sealed class InMemoryTransportSubscriptionTests
 {
+    private static readonly IBusConfiguration BusConfiguration = Mock.Of<IBusConfiguration>(c => c.MaxDeliveryAttempts == 5);
+
     [Test]
     public async Task SubscribeAsync_WhenMessageIsSent_InvokesHandlerWithIncrementedDeliveryAttempt()
     {
@@ -19,6 +22,7 @@ public sealed class InMemoryTransportSubscriptionTests
         var receivedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var subscription = await transport.SubscribeAsync(
+            BusConfiguration,
             "orders.created",
             new DelegateInboundMessageHandler((message, _) =>
             {
@@ -47,6 +51,7 @@ public sealed class InMemoryTransportSubscriptionTests
         var secondAttemptSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var subscription = await transport.SubscribeAsync(
+            BusConfiguration,
             "orders.created",
             new DelegateInboundMessageHandler((message, _) =>
             {
@@ -79,6 +84,7 @@ public sealed class InMemoryTransportSubscriptionTests
         var handledSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var subscription = await transport.SubscribeAsync(
+            BusConfiguration,
             "orders.created",
             new DelegateInboundMessageHandler((_, _) =>
             {
@@ -108,6 +114,7 @@ public sealed class InMemoryTransportSubscriptionTests
 
         var callbackCount = 0;
         var subscription = await transport.SubscribeAsync(
+            BusConfiguration,
             "orders.created",
             new DelegateInboundMessageHandler((_, _) =>
             {
@@ -136,6 +143,7 @@ public sealed class InMemoryTransportSubscriptionTests
         var firstReceivedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var subscription = await transport.SubscribeAsync(
+            BusConfiguration,
             "orders.created",
             new DelegateInboundMessageHandler((_, _) =>
             {
@@ -153,6 +161,7 @@ public sealed class InMemoryTransportSubscriptionTests
         var callbackCount = 0;
         var secondReceivedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var subscription2 = await transport.SubscribeAsync(
+            BusConfiguration,
             "orders.created",
             new DelegateInboundMessageHandler((_, _) =>
             {
@@ -181,6 +190,7 @@ public sealed class InMemoryTransportSubscriptionTests
         var releaseHandler = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var subscription = await transport.SubscribeAsync(
+            BusConfiguration,
             "orders.created",
             new DelegateInboundMessageHandler(async (_, _) =>
             {

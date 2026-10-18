@@ -10,6 +10,8 @@ namespace PTrampert.MessageBus.Transports.InMemory;
 /// </summary>
 public class InMemoryTransportSubscription : ITransportSubscription
 {
+    private readonly IBusConfiguration _busConfiguration;
+    
     private readonly Channel<InboundMessage> _messages = Channel.CreateUnbounded<InboundMessage>();
 
     private readonly ILogger<InMemoryTransportSubscription> _logger;
@@ -19,6 +21,7 @@ public class InMemoryTransportSubscription : ITransportSubscription
     private readonly Action<InMemoryTransportSubscription> _onDispose;
 
     internal InMemoryTransportSubscription(
+        IBusConfiguration busConfiguration,
         string name,
         IInboundMessageHandler handler,
         ILogger<InMemoryTransportSubscription> logger, 
@@ -26,6 +29,7 @@ public class InMemoryTransportSubscription : ITransportSubscription
         Action<InMemoryTransportSubscription> onDispose
     )
     {
+        _busConfiguration = busConfiguration;
         Name = name;
         _logger = logger;
         _onDispose = onDispose;
@@ -54,12 +58,11 @@ public class InMemoryTransportSubscription : ITransportSubscription
                     }
                     message = message with {DeliveryAttempt = message.DeliveryAttempt + 1};
                     var result = await handler.HandleInboundMessageAsync(message, cancellationToken);
-                    if (result == AckAction.Retry)
+                    if (message.DeliveryAttempt < _busConfiguration.MaxDeliveryAttempts && result == AckAction.Retry)
                     {
                         await _messages.Writer.WriteAsync(message, cancellationToken);
                     }
-
-                    if (result == AckAction.DeadLetter)
+                    else if (result is not AckAction.Ack)
                     {
                         _logger.LogError("Dead letter message: {@Message}", message);
                     }
