@@ -13,6 +13,7 @@
           <PrivateAssets>all</PrivateAssets>
           <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.14" />
         <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
@@ -31,6 +32,7 @@
     </ItemGroup>
 
     <ItemGroup>
+      <ProjectReference Include="..\PTrampert.MessageBus.Outbox.EntityFrameworkCore\PTrampert.MessageBus.Outbox.EntityFrameworkCore.csproj" />
       <ProjectReference Include="..\PTrampert.MessageBus.Transports.InMemory\PTrampert.MessageBus.Transports.InMemory.csproj" />
       <ProjectReference Include="..\PTrampert.MessageBus.Transports.RabbitMq\PTrampert.MessageBus.Transports.RabbitMq.csproj" />
       <ProjectReference Include="..\PTrampert.MessageBus\PTrampert.MessageBus.csproj" />
