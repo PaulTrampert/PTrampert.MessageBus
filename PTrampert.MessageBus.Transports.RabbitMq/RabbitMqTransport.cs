@@ -8,8 +8,8 @@ using RabbitMQ.Client.Events;
 namespace PTrampert.MessageBus.Transports.RabbitMq;
 
 /// <summary>
-/// RabbitMQ <see cref="ITransport"/> implementation. Uses a single shared publisher channel for sending
-/// and creates a dedicated channel per subscription for receiving.
+/// RabbitMQ <see cref="ITransport"/> implementation. Uses a single shared publisher channel, with publisher
+/// confirmations enabled, for sending and creates a dedicated channel per subscription for receiving.
 /// </summary>
 public sealed class RabbitMqTransport(
     RabbitMqTransportOptions options,
@@ -22,8 +22,11 @@ public sealed class RabbitMqTransport(
     private const string QuorumQueueType = "quorum";
     private const string DeadLetterExchangeArgument = "x-dead-letter-exchange";
     private const string DeadLetterRoutingKeyArgument = "x-dead-letter-routing-key";
+    private static readonly CreateChannelOptions PublisherChannelOptions = new(
+        publisherConfirmationsEnabled: true,
+        publisherConfirmationTrackingEnabled: true);
     private readonly SemaphoreSlim _publisherChannelLock = new(1, 1);
-    private readonly SemaphoreSlim _publisherSendLock = new(1, 1);
+    private readonly SemaphoreSlim _exchangeDeclareLock = new(1, 1);
     private readonly ConcurrentDictionary<string, byte> _declaredExchanges = new(StringComparer.Ordinal);
     private IChannel? _publisherChannel;
     private int _disposed;
@@ -45,20 +48,12 @@ public sealed class RabbitMqTransport(
 
         for (var attempt = 0; ; attempt++)
         {
-            await _publisherSendLock.WaitAsync(cancellationToken);
             try
             {
-                if (!_declaredExchanges.ContainsKey(message.Topic))
-                {
-                    await channel.ExchangeDeclareAsync(
-                        exchange: message.Topic,
-                        type: ExchangeType.Fanout,
-                        durable: true,
-                        autoDelete: false,
-                        cancellationToken: cancellationToken);
-                    _declaredExchanges.TryAdd(message.Topic, DeclaredExchangeMarker);
-                }
+                await EnsureExchangeDeclaredAsync(channel, message.Topic, cancellationToken);
 
+                // The publisher channel has confirmations enabled, so this completes only once the broker
+                // has acknowledged the message, and throws a PublishException if the broker rejects it.
                 await channel.BasicPublishAsync(
                     exchange: message.Topic,
                     routingKey: string.Empty,
@@ -72,10 +67,6 @@ public sealed class RabbitMqTransport(
             catch (AlreadyClosedException) when (attempt == 0)
             {
                 channel = await GetOrCreatePublisherChannelAsync(cancellationToken);
-            }
-            finally
-            {
-                _publisherSendLock.Release();
             }
         }
     }
@@ -244,7 +235,34 @@ public sealed class RabbitMqTransport(
         {
             _publisherChannelLock.Release();
             _publisherChannelLock.Dispose();
-            _publisherSendLock.Dispose();
+            _exchangeDeclareLock.Dispose();
+        }
+    }
+
+    private async Task EnsureExchangeDeclaredAsync(IChannel channel, string topic, CancellationToken cancellationToken)
+    {
+        if (_declaredExchanges.ContainsKey(topic))
+        {
+            return;
+        }
+
+        await _exchangeDeclareLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (!_declaredExchanges.ContainsKey(topic))
+            {
+                await channel.ExchangeDeclareAsync(
+                    exchange: topic,
+                    type: ExchangeType.Fanout,
+                    durable: true,
+                    autoDelete: false,
+                    cancellationToken: cancellationToken);
+                _declaredExchanges.TryAdd(topic, DeclaredExchangeMarker);
+            }
+        }
+        finally
+        {
+            _exchangeDeclareLock.Release();
         }
     }
 
@@ -270,7 +288,7 @@ public sealed class RabbitMqTransport(
                 await existingChannel.DisposeAsync();
             }
 
-            _publisherChannel = await connection.CreateChannelAsync(cancellationToken: cancellationToken);
+            _publisherChannel = await connection.CreateChannelAsync(PublisherChannelOptions, cancellationToken);
             _declaredExchanges.Clear();
             return _publisherChannel;
         }
