@@ -1,4 +1,8 @@
 using System.Collections.Concurrent;
+using PTrampert.MessageBus.Outbox;
+using PTrampert.MessageBus.Outbox.EntityFrameworkCore;
+using PTrampert.MessageBus.Test.Outbox;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,8 +15,10 @@ public abstract class EndToEndTestFixture
     protected const int MaxDeliveryAttempts = 3;
     private const int MaxRecordedAttempts = 20;
     private static readonly TimeSpan DeadLetterTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan OutboxPollingInterval = TimeSpan.FromMilliseconds(500);
 
     private IHost _host = null!;
+    private string _outboxConnectionString = null!;
 
     protected IServiceProvider Services => _host.Services;
     protected IPublisher Publisher;
@@ -54,9 +60,17 @@ public abstract class EndToEndTestFixture
         // A retry loop logs an error on every delivery; the default console logger would buffer all of them.
         hostBuilder.ConfigureLogging(logging => logging.ClearProviders());
 
+        _outboxConnectionString = OutboxTestDbContext.CreateConnectionString();
+
         hostBuilder.ConfigureServices(sc =>
         {
-            ConfigureServices(sc, bus => bus.MaxDeliveryAttempts = MaxDeliveryAttempts);
+            ConfigureServices(sc, bus =>
+            {
+                bus.MaxDeliveryAttempts = MaxDeliveryAttempts;
+                bus.OutboxPollingInterval = OutboxPollingInterval;
+            });
+            sc.AddDbContext<OutboxTestDbContext>(options => options.UseSqlite(_outboxConnectionString));
+            sc.AddPTrampertMessageBusEntityFrameworkOutbox<OutboxTestDbContext>();
             sc.AddScoped<E2ETestMessageHandler>();
             sc.AddScoped<AlwaysFailingMessageHandler>();
             sc.AddScoped<FlakyMessageHandler>();
@@ -64,6 +78,12 @@ public abstract class EndToEndTestFixture
         });
 
         _host = hostBuilder.Build();
+
+        using (var scope = _host.Services.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<OutboxTestDbContext>().Database.EnsureCreatedAsync();
+        }
+
         await _host.StartAsync();
     }
 
@@ -95,6 +115,8 @@ public abstract class EndToEndTestFixture
         {
             _host.Dispose();
         }
+
+        OutboxTestDbContext.DeleteDatabase(_outboxConnectionString);
 
         await StopExternalDependenciesAsync();
     }
@@ -163,6 +185,47 @@ public abstract class EndToEndTestFixture
             Assert.That(deadLettered, Is.True, "A message that fails to deserialize should be dead-lettered.");
             Assert.That(AttemptsFor(message.Id), Is.Empty, "The handler should never see a message that fails to deserialize.");
         });
+    }
+
+    [Test]
+    public async Task OutboxMessage_IsHandledOnceTheDbContextIsSaved()
+    {
+        var message = new E2ETestMessage($"outbox {Guid.NewGuid()}");
+        var dbContext = Scope.ServiceProvider.GetRequiredService<OutboxTestDbContext>();
+        var outbox = Scope.ServiceProvider.GetRequiredService<IOutboxPublisher>();
+
+        dbContext.Widgets.Add(new Widget { Id = Guid.NewGuid(), Name = "saved with the message" });
+        await outbox.PublishAsync(message);
+        await Task.Delay(OutboxPollingInterval * 4);
+        var handledBeforeSave = HandledE2ETestMessages.Contains(message);
+
+        await dbContext.SaveChangesAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(handledBeforeSave, Is.False, "An outbox message should not be sent before the DbContext is saved.");
+            Assert.That(() => HandledE2ETestMessages.Contains(message), Is.True.After(30000, 100));
+        });
+    }
+
+    [Test]
+    public async Task OutboxMessage_TransactionRolledBack_IsNotHandled()
+    {
+        var message = new E2ETestMessage($"rolled back {Guid.NewGuid()}");
+        var dbContext = Scope.ServiceProvider.GetRequiredService<OutboxTestDbContext>();
+        var outbox = Scope.ServiceProvider.GetRequiredService<IOutboxPublisher>();
+
+        await using (var transaction = await dbContext.Database.BeginTransactionAsync())
+        {
+            await outbox.PublishAsync(message);
+            await dbContext.SaveChangesAsync();
+            await transaction.RollbackAsync();
+        }
+
+        await Task.Delay(OutboxPollingInterval * 4);
+
+        Assert.That(HandledE2ETestMessages, Does.Not.Contain(message),
+            "An outbox message should not be sent when the transaction that saved it is rolled back.");
     }
 
     private async Task<bool> WaitForDeadLetterAsync(string topic, Guid id)

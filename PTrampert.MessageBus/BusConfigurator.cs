@@ -27,6 +27,41 @@ public class BusConfigurator : IBusConfiguration
     public int MaxDeliveryAttempts { get; set; } = 5;
 
     /// <summary>
+    /// How long the outbox dispatcher waits before checking the outbox for unsent messages again. The dispatcher is
+    /// also woken as soon as an <see cref="Outbox.IOutboxStore"/> reports that messages were committed, so this
+    /// mainly bounds how long a message committed by another process, or after a failed send, waits.
+    /// Only used when the outbox is registered.
+    /// </summary>
+    /// <remarks>Defaults to 5 seconds.</remarks>
+    public TimeSpan OutboxPollingInterval
+    {
+        get => _outboxPollingInterval;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero);
+            _outboxPollingInterval = value;
+        }
+    }
+
+    /// <summary>
+    /// The maximum number of outbox messages the outbox dispatcher reads and sends at once.
+    /// Only used when the outbox is registered.
+    /// </summary>
+    /// <remarks>Defaults to 100.</remarks>
+    public int OutboxBatchSize
+    {
+        get => _outboxBatchSize;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
+            _outboxBatchSize = value;
+        }
+    }
+
+    private TimeSpan _outboxPollingInterval = TimeSpan.FromSeconds(5);
+    private int _outboxBatchSize = 100;
+
+    /// <summary>
     /// Scans the given assemblies for <see cref="IHandler{TMessage}"/> implementations and registers them automatically.
     /// If no assemblies are provided, all assemblies currently loaded in the application domain are scanned.
     /// </summary>
