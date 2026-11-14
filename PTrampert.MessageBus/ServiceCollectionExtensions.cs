@@ -1,6 +1,7 @@
 using System.Reflection;
 using PTrampert.MessageBus.Registries;
 using PTrampert.MessageBus.Helpers;
+using PTrampert.MessageBus.Outbox;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -62,6 +63,28 @@ public static class ServiceCollectionExtensions
         });
         services.AddScoped<IPublisher, DefaultPublisher>();
         
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the transactional outbox: an <see cref="IOutboxPublisher"/> that stores messages through
+    /// <typeparamref name="TOutboxStore"/>, and a hosted service that sends the stored messages once they are
+    /// committed. Use together with <see cref="AddPTrampertMessageBus"/> (or a transport-specific overload), and
+    /// configure the dispatcher through <see cref="BusConfigurator.OutboxPollingInterval"/> and
+    /// <see cref="BusConfigurator.OutboxBatchSize"/>.
+    /// </summary>
+    /// <typeparam name="TOutboxStore">The <see cref="IOutboxStore"/> implementation, registered as a scoped service.</typeparam>
+    /// <param name="services">The <see cref="IServiceCollection"/> to add services to.</param>
+    /// <returns>The same <see cref="IServiceCollection"/> instance so calls can be chained.</returns>
+    public static IServiceCollection AddPTrampertMessageBusOutbox<TOutboxStore>(this IServiceCollection services)
+        where TOutboxStore : class, IOutboxStore
+    {
+        services.TryAddScoped<IOutboxStore, TOutboxStore>();
+        services.TryAddScoped<IOutboxPublisher, OutboxPublisher>();
+        services.TryAddSingleton<OutboxNotifier>();
+        services.TryAddSingleton<IOutboxNotifier>(sp => sp.GetRequiredService<OutboxNotifier>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, OutboxDispatcher>());
+
         return services;
     }
 
